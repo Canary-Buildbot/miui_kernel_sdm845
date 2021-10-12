@@ -497,7 +497,7 @@ struct binder_priority {
  *                        (protected by @inner_lock)
  * @pid                   PID of group_leader of process
  *                        (invariant after initialized)
- * @tsk                   task_struct for group_leader of process
+ * @cred                   task_struct for group_leader of process
  *                        (invariant after initialized)
  * @files                 files_struct for process
  *                        (protected by @files_lock)
@@ -546,7 +546,7 @@ struct binder_proc {
 	struct rb_root refs_by_node;
 	struct list_head waiting_threads;
 	int pid;
-	struct task_struct *tsk;
+	struct task_struct *cred;
 	struct files_struct *files;
 	struct mutex files_lock;
 	const struct cred *cred;
@@ -955,12 +955,12 @@ static int task_get_unused_fd_flags(struct binder_proc *proc, int flags)
 		ret = -ESRCH;
 		goto err;
 	}
-	if (!lock_task_sighand(proc->tsk, &irqs)) {
+	if (!lock_task_sighand(proc->cred, &irqs)) {
 		ret = -EMFILE;
 		goto err;
 	}
-	rlim_cur = task_rlimit(proc->tsk, RLIMIT_NOFILE);
-	unlock_task_sighand(proc->tsk, &irqs);
+	rlim_cur = task_rlimit(proc->cred, RLIMIT_NOFILE);
+	unlock_task_sighand(proc->cred, &irqs);
 
 	ret = __alloc_fd(proc->files, 0, rlim_cur, flags);
 err:
@@ -2581,7 +2581,7 @@ static int binder_translate_binder(struct flat_binder_object *fp,
 		ret = -EINVAL;
 		goto done;
 	}
-	if (security_binder_transfer_binder(proc->tsk, target_proc->tsk)) {
+	if (security_binder_transfer_binder(proc->cred, target_proc->cred)) {
 		ret = -EPERM;
 		goto done;
 	}
@@ -2627,7 +2627,7 @@ static int binder_translate_handle(struct flat_binder_object *fp,
 				  proc->pid, thread->pid, fp->handle);
 		return -EINVAL;
 	}
-	if (security_binder_transfer_binder(proc->tsk, target_proc->tsk)) {
+	if (security_binder_transfer_binder(proc->cred, target_proc->cred)) {
 		ret = -EPERM;
 		goto done;
 	}
@@ -2711,7 +2711,7 @@ static int binder_translate_fd(int fd,
 		ret = -EBADF;
 		goto err_fget;
 	}
-	ret = security_binder_transfer_file(proc->tsk, target_proc->tsk, file);
+	ret = security_binder_transfer_file(proc->cred, target_proc->cred, file);
 	if (ret < 0) {
 		ret = -EPERM;
 		goto err_security;
@@ -3122,8 +3122,8 @@ static void binder_transaction(struct binder_proc *proc,
 			return_error_line = __LINE__;
 			goto err_invalid_target_handle;
 		}
-		if (security_binder_transaction(proc->tsk,
-						target_proc->tsk) < 0) {
+		if (security_binder_transaction(proc->cred,
+						target_proc->cred) < 0) {
 			return_error = BR_FAILED_REPLY;
 			return_error_param = -EPERM;
 			return_error_line = __LINE__;
@@ -3233,7 +3233,7 @@ static void binder_transaction(struct binder_proc *proc,
 		u32 secid;
 		size_t added_size;
 
-		security_task_getsecid(proc->tsk, &secid);
+		security_task_getsecid(proc->cred, &secid);
 		ret = security_secid_to_secctx(secid, &secctx, &secctx_sz);
 		if (ret) {
 			return_error = BR_FAILED_REPLY;
@@ -4478,7 +4478,7 @@ retry:
 
 		t_from = binder_get_txn_from(t);
 		if (t_from) {
-			struct task_struct *sender = t_from->proc->tsk;
+			struct task_struct *sender = t_from->proc->cred;
 
 			trd->sender_pid =
 				task_tgid_nr_ns(sender,
@@ -4697,7 +4697,7 @@ static void binder_free_proc(struct binder_proc *proc)
 	BUG_ON(!list_empty(&proc->todo));
 	BUG_ON(!list_empty(&proc->delivered_death));
 	binder_alloc_deferred_release(&proc->alloc);
-	put_task_struct(proc->tsk);
+	put_task_struct(proc->cred);
 	put_cred(proc->cred);
 	binder_stats_deleted(BINDER_STAT_PROC);
 	kfree(proc);
@@ -4904,7 +4904,7 @@ static int binder_ioctl_set_ctx_mgr(struct file *filp,
 		ret = -EBUSY;
 		goto out;
 	}
-	ret = security_binder_set_context_mgr(proc->tsk);
+	ret = security_binder_set_context_mgr(proc->cred);
 	if (ret < 0)
 		goto out;
 	if (uid_valid(context->binder_context_mgr_uid)) {
@@ -5172,7 +5172,7 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	struct binder_proc *proc = filp->private_data;
 	const char *failure_string;
 
-	if (proc->tsk != current->group_leader)
+	if (proc->cred != current->group_leader)
 		return -EINVAL;
 
 	if ((vma->vm_end - vma->vm_start) > SZ_4M)
@@ -5224,7 +5224,7 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	spin_lock_init(&proc->outer_lock);
 	atomic_set(&proc->tmp_ref, 0);
 	get_task_struct(current->group_leader);
-	proc->tsk = current->group_leader;
+	proc->cred = current->group_leader;
 	mutex_init(&proc->files_lock);
 	proc->cred = get_cred(filp->f_cred);
 	INIT_LIST_HEAD(&proc->todo);
